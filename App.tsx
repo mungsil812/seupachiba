@@ -11,7 +11,7 @@ import { Trash2, RefreshCw, XCircle, Menu } from 'lucide-react';
 const BLOB_API_URL = "https://jsonblob.com/api/jsonBlob";
 
 // Helper to prevent hanging requests
-const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 5000): Promise<Response> => {
+const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 8000): Promise<Response> => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -60,6 +60,19 @@ const App: React.FC = () => {
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; message: string; onConfirm: () => void } | null>(null);
 
+  // --- Safety Mechanism: Force load if stuck ---
+  useEffect(() => {
+    if (isInitializing) {
+        const timer = setTimeout(() => {
+            console.warn("Initialization timed out, forcing Offline Mode.");
+            setProjects((prev) => prev.length > 0 ? prev : INITIAL_PROJECTS);
+            setIsOffline(true);
+            setIsInitializing(false);
+        }, 6000); // Force load after 6 seconds
+        return () => clearTimeout(timer);
+    }
+  }, [isInitializing]);
+
   // --- Persistence & Sync Logic ---
   useEffect(() => {
     let mounted = true;
@@ -72,7 +85,11 @@ const App: React.FC = () => {
            
            // 1. Validate ID from URL or LocalStorage
            if (!currentId || currentId === "null" || currentId === "undefined") {
-              currentId = localStorage.getItem('seupachiba_sync_id');
+              try {
+                  currentId = localStorage.getItem('seupachiba_sync_id');
+              } catch(e) {
+                  console.warn("LocalStorage access denied");
+              }
            }
            if (currentId === "null" || currentId === "undefined") {
               currentId = null;
@@ -139,10 +156,14 @@ const App: React.FC = () => {
                setProjects(data);
                
                if (currentId) {
-                   localStorage.setItem('seupachiba_sync_id', currentId);
-                   const newUrl = new URL(window.location.href);
-                   newUrl.searchParams.set('syncId', currentId);
-                   window.history.replaceState({}, '', newUrl.toString());
+                   try {
+                       localStorage.setItem('seupachiba_sync_id', currentId);
+                       const newUrl = new URL(window.location.href);
+                       newUrl.searchParams.set('syncId', currentId);
+                       window.history.replaceState({}, '', newUrl.toString());
+                   } catch(e) {
+                       console.warn("LocalStorage or URL update failed", e);
+                   }
                }
            }
        } catch (err) {
@@ -378,7 +399,19 @@ const App: React.FC = () => {
      return (
         <div className="h-screen w-full flex items-center justify-center bg-gray-50 flex-col gap-4">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-            <p className="text-gray-600 font-medium">서버와 연결 중입니다...</p>
+            <p className="text-gray-600 font-medium">
+                {isOffline ? '로컬 모드로 시작하는 중...' : '서버와 연결 중입니다...'}
+            </p>
+            <button 
+                onClick={() => {
+                    setProjects(INITIAL_PROJECTS);
+                    setIsOffline(true);
+                    setIsInitializing(false);
+                }}
+                className="text-xs text-gray-400 underline hover:text-gray-600 mt-4"
+            >
+                연결이 지연되나요? 오프라인 모드로 시작하기
+            </button>
         </div>
      );
   }
