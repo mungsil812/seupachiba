@@ -32,6 +32,7 @@ const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [syncId, setSyncId] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [hasServerUpdates, setHasServerUpdates] = useState(false);
 
   const [view, setView] = useState<string>('HOME'); 
   const [selectedCategory, setSelectedCategory] = useState<Category | undefined>(undefined);
@@ -47,66 +48,79 @@ const App: React.FC = () => {
        const params = new URLSearchParams(window.location.search);
        let currentId = params.get('syncId');
        let data = INITIAL_PROJECTS;
-       let isNew = false;
-
-       // 1. Check URL
-       if (!currentId) {
-          // 2. Check LocalStorage fallback
+       
+       // 1. Validate ID from URL or LocalStorage
+       if (!currentId || currentId === "null" || currentId === "undefined") {
           currentId = localStorage.getItem('seupachiba_sync_id');
        }
+       if (currentId === "null" || currentId === "undefined") {
+          currentId = null;
+       }
 
+       // 2. If ID exists, try to fetch data
        if (currentId) {
           try {
              const res = await fetch(`${BLOB_API_URL}/${currentId}`);
              if (res.ok) {
-                data = await res.json();
-                setSyncId(currentId);
+                const fetchedData = await res.json();
+                if (Array.isArray(fetchedData)) {
+                    data = fetchedData;
+                    setSyncId(currentId);
+                } else {
+                    // Data corrupted
+                    console.warn("Fetched data is not an array, creating new...");
+                    currentId = null;
+                }
              } else {
                 console.warn("Invalid Sync ID or expired, creating new...");
                 currentId = null; 
              }
           } catch (e) {
              console.error("Fetch failed", e);
+             // If fetch fails (network), we might want to keep the ID but load local backup? 
+             // For now, simpler to assume network is req for sync.
              currentId = null;
           }
        }
 
        // 3. Create new if no ID or fetch failed
        if (!currentId) {
-          isNew = true;
           try {
              const res = await fetch(BLOB_API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(INITIAL_PROJECTS)
              });
+             
              if (res.ok) {
                  const location = res.headers.get('Location');
                  // Location is full URL usually: https://jsonblob.com/api/jsonBlob/<id>
-                 const parts = location?.split('/');
-                 const newId = parts ? parts[parts.length - 1] : null;
-                 if (newId) {
-                     currentId = newId;
-                     setSyncId(newId);
-                     data = INITIAL_PROJECTS;
+                 if (location) {
+                     const parts = location.split('/');
+                     const newId = parts[parts.length - 1];
+                     if (newId) {
+                         currentId = newId;
+                         setSyncId(newId);
+                         data = INITIAL_PROJECTS;
+                     }
                  }
              }
           } catch(e) {
               console.error("Create failed", e);
-              // Fallback to local only mode if completely failed
               alert("서버 연결에 실패했습니다. 데이터가 로컬에만 임시 저장됩니다.");
           }
        }
 
+       // 4. Update State & URL
+       setProjects(data);
+       
        if (currentId) {
            localStorage.setItem('seupachiba_sync_id', currentId);
-           // Update URL without reload to allow sharing
            const newUrl = new URL(window.location.href);
            newUrl.searchParams.set('syncId', currentId);
            window.history.replaceState({}, '', newUrl.toString());
        }
 
-       setProjects(data);
        setIsInitializing(false);
     };
 
@@ -126,6 +140,7 @@ const App: React.FC = () => {
                  body: JSON.stringify(projects)
              });
              setSyncStatus('saved');
+             setHasServerUpdates(false); // We just saved, so we are current
          } catch(e) {
              console.error("Save failed", e);
              setSyncStatus('error');
@@ -135,16 +150,48 @@ const App: React.FC = () => {
      return () => clearTimeout(timer);
   }, [projects, syncId, isInitializing]);
 
+  // Polling for updates (Collaborative feature)
+  useEffect(() => {
+    if (!syncId || isInitializing) return;
+
+    const pollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`${BLOB_API_URL}/${syncId}`);
+            if (res.ok) {
+                const serverData = await res.json();
+                if (Array.isArray(serverData)) {
+                    // Simple comparison to check if server has different data
+                    const currentStr = JSON.stringify(projects);
+                    const serverStr = JSON.stringify(serverData);
+                    
+                    if (currentStr !== serverStr && syncStatus !== 'saving') {
+                        setHasServerUpdates(true);
+                    }
+                }
+            }
+        } catch(e) {
+            // ignore polling errors
+        }
+    }, 15000); // Check every 15 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [syncId, projects, isInitializing, syncStatus]);
+
   const handleRefresh = async () => {
     if (!syncId) return;
-    setSyncStatus('saving');
+    setSyncStatus('saving'); 
     try {
       const res = await fetch(`${BLOB_API_URL}/${syncId}`);
       if (res.ok) {
         const data = await res.json();
-        setProjects(data);
-        setSyncStatus('saved');
-        alert('서버에서 최신 데이터를 불러왔습니다.');
+        if (Array.isArray(data)) {
+            setProjects(data);
+            setSyncStatus('saved');
+            setHasServerUpdates(false);
+            alert('서버에서 최신 데이터를 불러왔습니다.');
+        } else {
+            throw new Error("Invalid data format");
+        }
       } else {
         throw new Error('Fetch failed');
       }
@@ -175,7 +222,7 @@ const App: React.FC = () => {
     if (window.innerWidth < 768) {
         setIsSidebarVisible(false);
     }
-  }, [isInitializing]); // Run after init
+  }, [isInitializing]); 
 
   // --- Actions ---
 
@@ -185,7 +232,6 @@ const App: React.FC = () => {
     setSelectedProjectId(null); 
     if (category) window.location.hash = category;
     
-    // On mobile, auto close sidebar on nav
     if (window.innerWidth < 768) setIsSidebarVisible(false);
   };
 
@@ -195,7 +241,6 @@ const App: React.FC = () => {
         setSelectedProjectId(projectId);
         setSelectedCategory(project.category);
         setView('PROJECT_DETAIL');
-        // On mobile, auto close sidebar on nav
         if (window.innerWidth < 768) setIsSidebarVisible(false);
     }
   };
@@ -217,7 +262,6 @@ const App: React.FC = () => {
 
   // --- TRASH LOGIC ---
 
-  // Restore
   const handleRestoreProject = (id: string) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, isDeleted: false } : p));
   };
@@ -233,7 +277,6 @@ const App: React.FC = () => {
       }));
   };
 
-  // Permanent Delete
   const handlePermanentDeleteProject = (id: string) => {
     setConfirmModal({
         isOpen: true,
@@ -322,7 +365,6 @@ const App: React.FC = () => {
     }
 
     if (view === 'PROJECT_DETAIL' && activeProject) {
-        // ProjectDetail handles its own scrolling internally
         return (
             <ProjectDetail 
                 project={activeProject} 
@@ -429,7 +471,6 @@ const App: React.FC = () => {
             </div>
         );
     }
-
     return null;
   };
 
@@ -452,6 +493,7 @@ const App: React.FC = () => {
         toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)}
         syncStatus={syncStatus} 
         onRefresh={handleRefresh}
+        hasUpdates={hasServerUpdates}
       />
       
       <main className="flex-1 h-full overflow-hidden relative flex flex-col">
