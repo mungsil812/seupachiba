@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, FolderOpen, PlusCircle, Trash2, ChevronDown, ChevronRight, X, FileText, Cloud, CheckCircle, Loader2, AlertCircle, Link as LinkIcon, RefreshCw, Share2, WifiOff } from 'lucide-react';
+import { Home, FolderOpen, PlusCircle, Trash2, ChevronDown, ChevronRight, X, FileText, Cloud, CheckCircle, Loader2, AlertCircle, Link as LinkIcon, RefreshCw } from 'lucide-react';
 import { Category, Project } from '../types';
 import { CATEGORY_LABELS } from '../constants';
 
@@ -12,11 +12,9 @@ interface SidebarProps {
   toggleSidebar: () => void;
   syncStatus?: 'saved' | 'saving' | 'error';
   onRefresh: () => void;
-  hasUpdates?: boolean;
-  isOffline?: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProject, projects, isOpen, toggleSidebar, syncStatus = 'saved', onRefresh, hasUpdates = false, isOffline = false }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProject, projects, isOpen, toggleSidebar, syncStatus = 'saved', onRefresh }) => {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(true);
   const [isCategoryOpen, setIsCategoryOpen] = useState<Record<Category, boolean>>({
     DESSERT: true,
@@ -33,31 +31,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProj
     setIsCategoryOpen(prev => ({ ...prev, [cat]: !prev[cat] }));
   };
 
-  const handleShareLink = async () => {
-    if (isOffline) {
-        alert("오프라인 모드에서는 공유 기능을 사용할 수 없습니다.\n인터넷 연결을 확인하거나 나중에 다시 시도해주세요.");
-        return;
-    }
-
-    const url = window.location.href;
-    const shareData = {
-        title: 'Seupachiba 공동 작업',
-        text: '이 링크로 접속하면 함께 디저트 개발 리포트를 작성할 수 있습니다.',
-        url: url
-    };
-
-    if (navigator.share) {
-        try {
-            await navigator.share(shareData);
-        } catch (err) {
-            console.log('Share canceled or failed', err);
-        }
-    } else {
-        // Fallback for PC / Browsers without share API
-        navigator.clipboard.writeText(url).then(() => {
-            alert("공동 작업 링크가 복사되었습니다.\n\n동료에게 이 링크를 전달하면 즉시 함께 작업할 수 있습니다.");
-        });
-    }
+  const copySyncLink = () => {
+    navigator.clipboard.writeText(window.location.href).then(() => {
+        alert("기기 연동 링크가 복사되었습니다.\n\n[사용 방법]\n1. 이 링크를 카카오톡이나 이메일로 다른 기기(스마트폰, 태블릿 등)에 보냅니다.\n2. 해당 기기에서 링크를 열면 작성한 내용이 그대로 동기화됩니다.");
+    });
   };
 
   const navClass = (isActive: boolean) =>
@@ -162,51 +139,34 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProj
       {/* Footer / Sync & Trash */}
       <div className="p-2 border-t border-gray-200 space-y-1">
          {/* Sync Status Display */}
-         <div className="px-3 py-3 rounded-lg bg-gray-50 border border-gray-200 text-xs flex flex-col gap-3 mb-2">
-            <div className="flex items-center justify-between">
+         <div className="px-3 py-2 rounded-lg bg-gray-50 border border-gray-200 text-xs flex flex-col gap-2 mb-2">
+            <div className="flex items-center justify-between mb-2">
                 <span className="font-bold text-gray-600 flex items-center gap-1.5">
-                    {isOffline ? <WifiOff size={14} className="text-gray-400" /> : <Cloud size={14} />}
-                    {isOffline ? '오프라인 모드' : '공동 작업'}
+                    <Cloud size={14} /> 서버 동기화
                 </span>
                 <span className="flex items-center gap-1">
-                    {isOffline ? (
-                        <span className="text-gray-400">서버 연결 없음</span>
-                    ) : (
-                        <>
-                            {syncStatus === 'saving' && <><Loader2 size={12} className="animate-spin text-blue-500" /><span className="text-blue-500">저장 중..</span></>}
-                            {syncStatus === 'saved' && <><CheckCircle size={12} className="text-green-500" /><span className="text-green-500">동기화됨</span></>}
-                            {syncStatus === 'error' && <><AlertCircle size={12} className="text-red-500" /><span className="text-red-500">오류</span></>}
-                        </>
-                    )}
+                    {syncStatus === 'saving' && <><Loader2 size={12} className="animate-spin text-blue-500" /><span className="text-blue-500">저장 중..</span></>}
+                    {syncStatus === 'saved' && <><CheckCircle size={12} className="text-green-500" /><span className="text-green-500">완료</span></>}
+                    {syncStatus === 'error' && <><AlertCircle size={12} className="text-red-500" /><span className="text-red-500">실패</span></>}
                 </span>
             </div>
             
-            <button 
-                onClick={handleShareLink}
-                className={`w-full flex items-center justify-center gap-2 rounded py-2 transition-colors shadow-sm ${isOffline ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-gray-800 text-white hover:bg-gray-700'}`}
-            >
-                <Share2 size={14} />
-                <span className="font-bold">공유 / 초대하기</span>
-            </button>
-
-            {!isOffline && (
-                <div className="flex items-center justify-between bg-white border border-gray-200 rounded p-1.5">
-                    <span className="text-gray-400 px-1">최신 데이터 확인</span>
-                    <button 
-                        onClick={onRefresh}
-                        className={`relative p-1.5 rounded transition-colors flex items-center justify-center ${hasUpdates ? 'bg-primary/10 text-primary animate-pulse' : 'text-gray-500 hover:bg-gray-100'}`}
-                        title="새로고침"
-                    >
-                        <RefreshCw size={14} className={syncStatus === 'saving' ? 'animate-spin' : ''} />
-                        {hasUpdates && (
-                            <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></span>
-                        )}
-                    </button>
-                </div>
-            )}
-            
-            <div className="text-[10px] text-gray-400 text-center leading-tight">
-               {isOffline ? '* 데이터가 로컬에만 저장됩니다.' : '* 이 링크를 가진 사람은 누구나\n접속 및 수정이 가능합니다.'}
+            <div className="flex gap-1">
+                <button 
+                    onClick={copySyncLink}
+                    className="flex-1 flex items-center justify-center gap-1 bg-white border border-gray-300 rounded py-1.5 text-gray-600 hover:text-primary hover:border-primary transition-colors text-xs"
+                    title="기기 연동 링크 복사"
+                >
+                    <LinkIcon size={12} />
+                    링크 복사
+                </button>
+                <button 
+                    onClick={onRefresh}
+                    className="px-2 bg-white border border-gray-300 rounded py-1.5 text-gray-600 hover:text-primary hover:border-primary transition-colors text-xs flex items-center justify-center"
+                    title="서버 데이터 불러오기 (새로고침)"
+                >
+                    <RefreshCw size={12} />
+                </button>
             </div>
          </div>
 

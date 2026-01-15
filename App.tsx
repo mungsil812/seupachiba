@@ -10,23 +10,6 @@ import { Trash2, RefreshCw, XCircle, Menu } from 'lucide-react';
 
 const BLOB_API_URL = "https://jsonblob.com/api/jsonBlob";
 
-// Helper to prevent hanging requests
-const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 8000): Promise<Response> => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
-    try {
-        const response = await fetch(url, {
-            ...options,
-            signal: controller.signal
-        });
-        clearTimeout(id);
-        return response;
-    } catch (error) {
-        clearTimeout(id);
-        throw error;
-    }
-};
-
 const ConfirmModal: React.FC<{ isOpen: boolean, onConfirm: () => void, onCancel: () => void, message: string }> = ({ isOpen, onConfirm, onCancel, message }) => {
   if (!isOpen) return null;
   return createPortal(
@@ -49,8 +32,6 @@ const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [syncId, setSyncId] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<'saved' | 'saving' | 'error'>('saved');
-  const [hasServerUpdates, setHasServerUpdates] = useState(false);
-  const [isOffline, setIsOffline] = useState(false);
 
   const [view, setView] = useState<string>('HOME'); 
   const [selectedCategory, setSelectedCategory] = useState<Category | undefined>(undefined);
@@ -60,132 +41,81 @@ const App: React.FC = () => {
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; message: string; onConfirm: () => void } | null>(null);
 
-  // --- Safety Mechanism: Force load if stuck ---
-  useEffect(() => {
-    if (isInitializing) {
-        const timer = setTimeout(() => {
-            console.warn("Initialization timed out, forcing Offline Mode.");
-            setProjects((prev) => prev.length > 0 ? prev : INITIAL_PROJECTS);
-            setIsOffline(true);
-            setIsInitializing(false);
-        }, 6000); // Force load after 6 seconds
-        return () => clearTimeout(timer);
-    }
-  }, [isInitializing]);
-
   // --- Persistence & Sync Logic ---
   useEffect(() => {
-    let mounted = true;
-
     const initStorage = async () => {
-       try {
-           const params = new URLSearchParams(window.location.search);
-           let currentId = params.get('syncId');
-           let data = INITIAL_PROJECTS;
-           
-           // 1. Validate ID from URL or LocalStorage
-           if (!currentId || currentId === "null" || currentId === "undefined") {
-              try {
-                  currentId = localStorage.getItem('seupachiba_sync_id');
-              } catch(e) {
-                  console.warn("LocalStorage access denied");
-              }
-           }
-           if (currentId === "null" || currentId === "undefined") {
-              currentId = null;
-           }
+       const params = new URLSearchParams(window.location.search);
+       let currentId = params.get('syncId');
+       let data = INITIAL_PROJECTS;
+       let isNew = false;
 
-           // 2. If ID exists, try to fetch data with timeout
-           if (currentId) {
-              try {
-                 const res = await fetchWithTimeout(`${BLOB_API_URL}/${currentId}`);
-                 if (res.ok) {
-                    const fetchedData = await res.json();
-                    if (Array.isArray(fetchedData)) {
-                        data = fetchedData;
-                        if (mounted) setSyncId(currentId);
-                    } else {
-                        // Data corrupted or invalid format
-                        console.warn("Fetched data is not an array, using initial data.");
-                        currentId = null; // Treat as invalid
-                    }
-                 } else {
-                    console.warn("Invalid Sync ID or expired (404/500), creating new...");
-                    currentId = null; 
-                 }
-              } catch (e) {
-                 console.error("Fetch failed (Network/Timeout)", e);
-                 currentId = null;
-              }
-           }
-
-           // 3. Create new if no ID or fetch failed
-           if (!currentId) {
-              try {
-                 const res = await fetchWithTimeout(BLOB_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(INITIAL_PROJECTS)
-                 });
-                 
-                 if (res.ok) {
-                     const location = res.headers.get('Location');
-                     // Location is full URL usually: https://jsonblob.com/api/jsonBlob/<id>
-                     if (location) {
-                         const parts = location.split('/');
-                         const newId = parts[parts.length - 1];
-                         if (newId) {
-                             currentId = newId;
-                             if (mounted) setSyncId(newId);
-                             data = INITIAL_PROJECTS;
-                         }
-                     }
-                 } else {
-                     console.warn("Failed to create new blob, status:", res.status);
-                     if (mounted) setIsOffline(true);
-                 }
-              } catch(e) {
-                  console.error("Create failed (Network/CORS/Timeout)", e);
-                  // Network error implies offline mode
-                  if (mounted) setIsOffline(true);
-              }
-           }
-
-           // 4. Update State & URL
-           if (mounted) {
-               setProjects(data);
-               
-               if (currentId) {
-                   try {
-                       localStorage.setItem('seupachiba_sync_id', currentId);
-                       const newUrl = new URL(window.location.href);
-                       newUrl.searchParams.set('syncId', currentId);
-                       window.history.replaceState({}, '', newUrl.toString());
-                   } catch(e) {
-                       console.warn("LocalStorage or URL update failed", e);
-                   }
-               }
-           }
-       } catch (err) {
-           console.error("Critical initialization error:", err);
-           // Fallback to defaults if everything blows up
-           if (mounted) {
-               setProjects(INITIAL_PROJECTS);
-               setIsOffline(true);
-           }
-       } finally {
-           if (mounted) setIsInitializing(false);
+       // 1. Check URL
+       if (!currentId) {
+          // 2. Check LocalStorage fallback
+          currentId = localStorage.getItem('seupachiba_sync_id');
        }
+
+       if (currentId) {
+          try {
+             const res = await fetch(`${BLOB_API_URL}/${currentId}`);
+             if (res.ok) {
+                data = await res.json();
+                setSyncId(currentId);
+             } else {
+                console.warn("Invalid Sync ID or expired, creating new...");
+                currentId = null; 
+             }
+          } catch (e) {
+             console.error("Fetch failed", e);
+             currentId = null;
+          }
+       }
+
+       // 3. Create new if no ID or fetch failed
+       if (!currentId) {
+          isNew = true;
+          try {
+             const res = await fetch(BLOB_API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(INITIAL_PROJECTS)
+             });
+             if (res.ok) {
+                 const location = res.headers.get('Location');
+                 // Location is full URL usually: https://jsonblob.com/api/jsonBlob/<id>
+                 const parts = location?.split('/');
+                 const newId = parts ? parts[parts.length - 1] : null;
+                 if (newId) {
+                     currentId = newId;
+                     setSyncId(newId);
+                     data = INITIAL_PROJECTS;
+                 }
+             }
+          } catch(e) {
+              console.error("Create failed", e);
+              // Fallback to local only mode if completely failed
+              alert("서버 연결에 실패했습니다. 데이터가 로컬에만 임시 저장됩니다.");
+          }
+       }
+
+       if (currentId) {
+           localStorage.setItem('seupachiba_sync_id', currentId);
+           // Update URL without reload to allow sharing
+           const newUrl = new URL(window.location.href);
+           newUrl.searchParams.set('syncId', currentId);
+           window.history.replaceState({}, '', newUrl.toString());
+       }
+
+       setProjects(data);
+       setIsInitializing(false);
     };
 
     initStorage();
-    
-    return () => { mounted = false; };
   }, []);
 
   // Save Logic (Debounced)
   useEffect(() => {
-     if (isInitializing || !syncId || isOffline) return;
+     if (isInitializing || !syncId) return;
      
      setSyncStatus('saving');
      const timer = setTimeout(async () => {
@@ -196,7 +126,6 @@ const App: React.FC = () => {
                  body: JSON.stringify(projects)
              });
              setSyncStatus('saved');
-             setHasServerUpdates(false); 
          } catch(e) {
              console.error("Save failed", e);
              setSyncStatus('error');
@@ -204,59 +133,25 @@ const App: React.FC = () => {
      }, 1000); // 1 second debounce
 
      return () => clearTimeout(timer);
-  }, [projects, syncId, isInitializing, isOffline]);
-
-  // Polling for updates (Collaborative feature)
-  useEffect(() => {
-    if (!syncId || isInitializing || isOffline) return;
-
-    const pollInterval = setInterval(async () => {
-        try {
-            const res = await fetch(`${BLOB_API_URL}/${syncId}`);
-            if (res.ok) {
-                const serverData = await res.json();
-                if (Array.isArray(serverData)) {
-                    const currentStr = JSON.stringify(projects);
-                    const serverStr = JSON.stringify(serverData);
-                    
-                    if (currentStr !== serverStr && syncStatus !== 'saving') {
-                        setHasServerUpdates(true);
-                    }
-                }
-            }
-        } catch(e) {
-            // ignore polling errors
-        }
-    }, 15000); // Check every 15 seconds
-
-    return () => clearInterval(pollInterval);
-  }, [syncId, projects, isInitializing, syncStatus, isOffline]);
+  }, [projects, syncId, isInitializing]);
 
   const handleRefresh = async () => {
-    if (!syncId || isOffline) {
-        if (isOffline) alert("오프라인 모드에서는 서버 데이터를 불러올 수 없습니다.");
-        return;
-    }
-    setSyncStatus('saving'); 
+    if (!syncId) return;
+    setSyncStatus('saving');
     try {
-      const res = await fetchWithTimeout(`${BLOB_API_URL}/${syncId}`);
+      const res = await fetch(`${BLOB_API_URL}/${syncId}`);
       if (res.ok) {
         const data = await res.json();
-        if (Array.isArray(data)) {
-            setProjects(data);
-            setSyncStatus('saved');
-            setHasServerUpdates(false);
-            alert('최신 데이터를 불러왔습니다.');
-        } else {
-            throw new Error("Invalid data format");
-        }
+        setProjects(data);
+        setSyncStatus('saved');
+        alert('서버에서 최신 데이터를 불러왔습니다.');
       } else {
         throw new Error('Fetch failed');
       }
     } catch (e) {
       console.error("Refresh failed", e);
       setSyncStatus('error');
-      alert('데이터 불러오기에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      alert('데이터 불러오기에 실패했습니다.');
     }
   };
 
@@ -276,10 +171,11 @@ const App: React.FC = () => {
         }
     }
     
+    // Initial Sidebar state for mobile
     if (window.innerWidth < 768) {
         setIsSidebarVisible(false);
     }
-  }, [isInitializing]); 
+  }, [isInitializing]); // Run after init
 
   // --- Actions ---
 
@@ -289,6 +185,7 @@ const App: React.FC = () => {
     setSelectedProjectId(null); 
     if (category) window.location.hash = category;
     
+    // On mobile, auto close sidebar on nav
     if (window.innerWidth < 768) setIsSidebarVisible(false);
   };
 
@@ -298,6 +195,7 @@ const App: React.FC = () => {
         setSelectedProjectId(projectId);
         setSelectedCategory(project.category);
         setView('PROJECT_DETAIL');
+        // On mobile, auto close sidebar on nav
         if (window.innerWidth < 768) setIsSidebarVisible(false);
     }
   };
@@ -319,6 +217,7 @@ const App: React.FC = () => {
 
   // --- TRASH LOGIC ---
 
+  // Restore
   const handleRestoreProject = (id: string) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, isDeleted: false } : p));
   };
@@ -334,6 +233,7 @@ const App: React.FC = () => {
       }));
   };
 
+  // Permanent Delete
   const handlePermanentDeleteProject = (id: string) => {
     setConfirmModal({
         isOpen: true,
@@ -399,19 +299,7 @@ const App: React.FC = () => {
      return (
         <div className="h-screen w-full flex items-center justify-center bg-gray-50 flex-col gap-4">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-            <p className="text-gray-600 font-medium">
-                {isOffline ? '로컬 모드로 시작하는 중...' : '서버와 연결 중입니다...'}
-            </p>
-            <button 
-                onClick={() => {
-                    setProjects(INITIAL_PROJECTS);
-                    setIsOffline(true);
-                    setIsInitializing(false);
-                }}
-                className="text-xs text-gray-400 underline hover:text-gray-600 mt-4"
-            >
-                연결이 지연되나요? 오프라인 모드로 시작하기
-            </button>
+            <p className="text-gray-600 font-medium">서버와 데이터를 동기화 중입니다...</p>
         </div>
      );
   }
@@ -434,6 +322,7 @@ const App: React.FC = () => {
     }
 
     if (view === 'PROJECT_DETAIL' && activeProject) {
+        // ProjectDetail handles its own scrolling internally
         return (
             <ProjectDetail 
                 project={activeProject} 
@@ -540,6 +429,7 @@ const App: React.FC = () => {
             </div>
         );
     }
+
     return null;
   };
 
@@ -562,8 +452,6 @@ const App: React.FC = () => {
         toggleSidebar={() => setIsSidebarVisible(!isSidebarVisible)}
         syncStatus={syncStatus} 
         onRefresh={handleRefresh}
-        hasUpdates={hasServerUpdates}
-        isOffline={isOffline}
       />
       
       <main className="flex-1 h-full overflow-hidden relative flex flex-col">
