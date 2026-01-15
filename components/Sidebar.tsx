@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, FolderOpen, PlusCircle, Trash2, ChevronDown, ChevronRight, X, FileText, Cloud, CheckCircle, Loader2, AlertCircle, Link as LinkIcon, RefreshCw, Share2 } from 'lucide-react';
+import { Home, FolderOpen, PlusCircle, Trash2, ChevronDown, ChevronRight, X, FileText, Cloud, CheckCircle, Loader2, AlertCircle, Link as LinkIcon, RefreshCw, Share2, WifiOff } from 'lucide-react';
 import { Category, Project } from '../types';
 import { CATEGORY_LABELS } from '../constants';
 
@@ -13,9 +13,10 @@ interface SidebarProps {
   syncStatus?: 'saved' | 'saving' | 'error';
   onRefresh: () => void;
   hasUpdates?: boolean;
+  isOffline?: boolean;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProject, projects, isOpen, toggleSidebar, syncStatus = 'saved', onRefresh, hasUpdates = false }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProject, projects, isOpen, toggleSidebar, syncStatus = 'saved', onRefresh, hasUpdates = false, isOffline = false }) => {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(true);
   const [isCategoryOpen, setIsCategoryOpen] = useState<Record<Category, boolean>>({
     DESSERT: true,
@@ -33,6 +34,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProj
   };
 
   const handleShareLink = async () => {
+    if (isOffline) {
+        alert("오프라인 모드에서는 링크를 공유할 수 없습니다.");
+        return;
+    }
     const url = window.location.href;
     const shareData = {
         title: 'Seupachiba 공동 작업',
@@ -159,18 +164,30 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProj
          <div className="px-3 py-3 rounded-lg bg-gray-50 border border-gray-200 text-xs flex flex-col gap-3 mb-2">
             <div className="flex items-center justify-between">
                 <span className="font-bold text-gray-600 flex items-center gap-1.5">
-                    <Cloud size={14} /> 공동 작업
+                    {isOffline ? <WifiOff size={14} className="text-gray-400" /> : <Cloud size={14} />} 
+                    {isOffline ? '오프라인' : '공동 작업'}
                 </span>
                 <span className="flex items-center gap-1">
-                    {syncStatus === 'saving' && <><Loader2 size={12} className="animate-spin text-blue-500" /><span className="text-blue-500">저장 중..</span></>}
-                    {syncStatus === 'saved' && <><CheckCircle size={12} className="text-green-500" /><span className="text-green-500">동기화됨</span></>}
-                    {syncStatus === 'error' && <><AlertCircle size={12} className="text-red-500" /><span className="text-red-500">오류</span></>}
+                    {isOffline ? (
+                         <><span className="text-gray-400">연결 안됨</span></>
+                    ) : (
+                        <>
+                            {syncStatus === 'saving' && <><Loader2 size={12} className="animate-spin text-blue-500" /><span className="text-blue-500">저장 중..</span></>}
+                            {syncStatus === 'saved' && <><CheckCircle size={12} className="text-green-500" /><span className="text-green-500">동기화됨</span></>}
+                            {syncStatus === 'error' && <><AlertCircle size={12} className="text-red-500" /><span className="text-red-500">오류</span></>}
+                        </>
+                    )}
                 </span>
             </div>
             
             <button 
                 onClick={handleShareLink}
-                className="w-full flex items-center justify-center gap-2 bg-gray-800 text-white rounded py-2 hover:bg-gray-700 transition-colors shadow-sm"
+                disabled={isOffline}
+                className={`w-full flex items-center justify-center gap-2 rounded py-2 transition-colors shadow-sm ${
+                    isOffline 
+                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed' 
+                    : 'bg-gray-800 text-white hover:bg-gray-700'
+                }`}
             >
                 <Share2 size={14} />
                 <span className="font-bold">공유 / 초대하기</span>
@@ -180,18 +197,22 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate, onSelectProj
                 <span className="text-gray-400 px-1">최신 데이터 확인</span>
                 <button 
                     onClick={onRefresh}
-                    className={`relative p-1.5 rounded transition-colors flex items-center justify-center ${hasUpdates ? 'bg-primary/10 text-primary animate-pulse' : 'text-gray-500 hover:bg-gray-100'}`}
+                    disabled={isOffline}
+                    className={`relative p-1.5 rounded transition-colors flex items-center justify-center ${
+                        isOffline ? 'text-gray-300' :
+                        (hasUpdates ? 'bg-primary/10 text-primary animate-pulse' : 'text-gray-500 hover:bg-gray-100')
+                    }`}
                     title="새로고침"
                 >
-                    <RefreshCw size={14} className={syncStatus === 'saving' ? 'animate-spin' : ''} />
-                    {hasUpdates && (
+                    <RefreshCw size={14} className={syncStatus === 'saving' && !isOffline ? 'animate-spin' : ''} />
+                    {hasUpdates && !isOffline && (
                         <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-white"></span>
                     )}
                 </button>
             </div>
             
             <div className="text-[10px] text-gray-400 text-center leading-tight">
-               * 이 링크를 가진 사람은 누구나<br/>접속 및 수정이 가능합니다.
+               {isOffline ? '서버와 연결되지 않아 데이터가\n임시 저장됩니다.' : '* 이 링크를 가진 사람은 누구나\n접속 및 수정이 가능합니다.'}
             </div>
          </div>
 
